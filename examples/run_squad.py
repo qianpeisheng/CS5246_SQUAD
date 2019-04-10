@@ -27,6 +27,7 @@ import random
 import sys
 from io import open
 
+import nltk
 import numpy as np
 import torch
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
@@ -51,6 +52,9 @@ logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(messa
                     level = logging.INFO)
 logger = logging.getLogger(__name__)
 
+pos_tags_list = ['PH','CC','CD','DT','EX','FW','IN','JJ','JJR','JJS','LS','MD','NN','NNS','NNP','NNPS','PDT','POS','PRP',
+    'PRP$','RB','RBR','RBS','RP','SYM','TO','UH','VB','VBD','VBG','VBN','VBP','VBZ','WDT','WP','WP$','WRB']
+    # PH for place holder
 
 class SquadExample(object):
     """
@@ -70,6 +74,9 @@ class SquadExample(object):
         self.question_text = question_text
         self.doc_tokens = doc_tokens
         self.orig_answer_text = orig_answer_text
+
+        self.orig_pos_tag = nltk.pos_tag(self.doc_tokens) # [('apple', 'NN'), ...,]
+        
         self.start_position = start_position
         self.end_position = end_position
         self.is_impossible = is_impossible
@@ -107,7 +114,8 @@ class InputFeatures(object):
                  segment_ids,
                  start_position=None,
                  end_position=None,
-                 is_impossible=None):
+                 is_impossible=None,
+                 pos_tags=None):
         self.unique_id = unique_id
         self.example_index = example_index
         self.doc_span_index = doc_span_index
@@ -120,6 +128,7 @@ class InputFeatures(object):
         self.start_position = start_position
         self.end_position = end_position
         self.is_impossible = is_impossible
+        self.pos_tags = pos_tags # []
 
 
 def read_squad_examples(input_file, is_training, version_2_with_negative):
@@ -258,17 +267,38 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             start_offset += min(length, doc_stride)
 
         for (doc_span_index, doc_span) in enumerate(doc_spans):
+            # add pos tagging
+            pos_tags = []
+            pos_tags.append(pos_tags_list.index('PH'))
+
             tokens = []
             token_to_orig_map = {}
             token_is_max_context = {}
             segment_ids = []
             tokens.append("[CLS]")
+
+
             segment_ids.append(0)
             for token in query_tokens:
                 tokens.append(token)
+                
+                pos_tags.append(pos_tags_list.index('PH'))
+
                 segment_ids.append(0)
             tokens.append("[SEP]")
+
+            pos_tags.append(pos_tags_list.index('PH'))
+            
             segment_ids.append(0)
+
+            for i in example.orig_pos_tag[doc_span.start:doc_span.start + doc_span.length]:
+                if i[1] in pos_tags_list:
+                    pos_tags.append(pos_tags_list.index(i[1]))
+                else:
+                    pos_tags.append(0) # place holder
+
+           #  pos_tags.extend([pos_tags_list.index(i[1])/len(example.orig_pos_tag) for i in example.orig_pos_tag[doc_span.start:doc_span.start + doc_span.length]])
+
 
             for i in range(doc_span.length):
                 split_token_index = doc_span.start + i
@@ -280,6 +310,9 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                 tokens.append(all_doc_tokens[split_token_index])
                 segment_ids.append(1)
             tokens.append("[SEP]")
+
+            pos_tags.append(pos_tags_list.index('PH'))
+
             segment_ids.append(1)
 
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
@@ -293,6 +326,9 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                 input_ids.append(0)
                 input_mask.append(0)
                 segment_ids.append(0)
+
+            while len(pos_tags) < max_seq_length:
+                pos_tags.append(pos_tags_list.index('PH'))
 
             assert len(input_ids) == max_seq_length
             assert len(input_mask) == max_seq_length
@@ -357,7 +393,8 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     segment_ids=segment_ids,
                     start_position=start_position,
                     end_position=end_position,
-                    is_impossible=example.is_impossible))
+                    is_impossible=example.is_impossible,
+                    pos_tags=pos_tags))
             unique_id += 1
 
     return features
@@ -973,8 +1010,11 @@ def main():
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
         all_start_positions = torch.tensor([f.start_position for f in train_features], dtype=torch.long)
         all_end_positions = torch.tensor([f.end_position for f in train_features], dtype=torch.long)
+
+        all_pos_tags = torch.tensor([f.pos_tags for f in train_features], dtype=torch.long)
+
         train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
-                                   all_start_positions, all_end_positions)
+                                   all_start_positions, all_end_positions, all_pos_tags)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
@@ -986,8 +1026,8 @@ def main():
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 if n_gpu == 1:
                     batch = tuple(t.to(device) for t in batch) # multi-gpu does scattering it-self
-                input_ids, input_mask, segment_ids, start_positions, end_positions = batch
-                loss = model(input_ids, segment_ids, input_mask, start_positions, end_positions)
+                input_ids, input_mask, segment_ids, start_positions, end_positions, pos_tags = batch
+                loss = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=[input_mask,pos_tags], start_positions=start_positions, end_positions=end_positions)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
@@ -1046,7 +1086,10 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index)
+
+        all_pos_tags = torch.tensor([f.pos_tags for f in train_features], dtype=torch.long)
+
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index, all_pos_tags)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.predict_batch_size)
@@ -1054,14 +1097,14 @@ def main():
         model.eval()
         all_results = []
         logger.info("Start evaluating")
-        for input_ids, input_mask, segment_ids, example_indices in tqdm(eval_dataloader, desc="Evaluating"):
+        for input_ids, input_mask, segment_ids, example_indices, pos_tags in tqdm(eval_dataloader, desc="Evaluating"):
             if len(all_results) % 1000 == 0:
                 logger.info("Processing example: %d" % (len(all_results)))
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
             with torch.no_grad():
-                batch_start_logits, batch_end_logits = model(input_ids, segment_ids, input_mask)
+                batch_start_logits, batch_end_logits = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=[input_mask,pos_tags])
             for i, example_index in enumerate(example_indices):
                 start_logits = batch_start_logits[i].detach().cpu().tolist()
                 end_logits = batch_end_logits[i].detach().cpu().tolist()

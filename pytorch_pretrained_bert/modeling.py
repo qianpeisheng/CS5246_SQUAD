@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
+# Copyright 2018 The Google AI Language Team Authors and The HugginFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +76,7 @@ def load_tf_weights_in_bert(model, tf_checkpoint_path):
         name = name.split('/')
         # adam_v and adam_m are variables used in AdamWeightDecayOptimizer to calculated m and v
         # which are not required for using pretrained model
-        if any(n in ["adam_v", "adam_m", "global_step"] for n in name):
+        if any(n in ["adam_v", "adam_m"] for n in name):
             print("Skipping {}".format("/".join(name)))
             continue
         pointer = model
@@ -91,14 +91,8 @@ def load_tf_weights_in_bert(model, tf_checkpoint_path):
                 pointer = getattr(pointer, 'bias')
             elif l[0] == 'output_weights':
                 pointer = getattr(pointer, 'weight')
-            elif l[0] == 'squad':
-                pointer = getattr(pointer, 'classifier')
             else:
-                try:
-                    pointer = getattr(pointer, l[0])
-                except AttributeError:
-                    print("Skipping {}".format("/".join(name)))
-                    continue
+                pointer = getattr(pointer, l[0])
             if len(l) >= 2:
                 num = int(l[1])
                 pointer = pointer[num]
@@ -223,7 +217,7 @@ class BertConfig(object):
 try:
     from apex.normalization.fused_layer_norm import FusedLayerNorm as BertLayerNorm
 except ImportError:
-    logger.info("Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex .")
+    print("Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex.")
     class BertLayerNorm(nn.Module):
         def __init__(self, hidden_size, eps=1e-12):
             """Construct a layernorm module in the TF style (epsilon inside the square root).
@@ -244,7 +238,7 @@ class BertEmbeddings(nn.Module):
     """
     def __init__(self, config):
         super(BertEmbeddings, self).__init__()
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
 
@@ -1174,17 +1168,33 @@ class BertForQuestionAnswering(BertPreTrainedModel):
     start_logits, end_logits = model(input_ids, token_type_ids, input_mask)
     ```
     """
+#    def __init__(self, config):
+#        super(BertForQuestionAnswering, self).__init__(config)
+#        self.bert = BertModel(config)
+#        # TODO check with Google if it's normal there is no dropout on the token classifier of SQuAD in the TF version
+#        # self.dropout = nn.Dropout(config.hidden_dropout_prob)
+#        self.qa_outputs = nn.Linear(config.hidden_size, 2)
+#        self.apply(self.init_bert_weights)
     def __init__(self, config):
+        '''
+            append POS/NER features in the fully connected layer
+        '''
         super(BertForQuestionAnswering, self).__init__(config)
         self.bert = BertModel(config)
         # TODO check with Google if it's normal there is no dropout on the token classifier of SQuAD in the TF version
         # self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.qa_outputs = nn.Linear(config.hidden_size, 2)
+        self.qa_outputs = nn.Linear(config.hidden_size + 1, 2)
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, start_positions=None, end_positions=None):
+        pos_tags = attention_mask[1].float()
+        pos_tags = torch.reshape(pos_tags, (3,384,1))
+        # print(pos_tags.size())
+        attention_mask = attention_mask[0]
         sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        logits = self.qa_outputs(sequence_output)
+        # print(sequence_output.size())
+        logits = self.qa_outputs(torch.cat((sequence_output,pos_tags),dim=2))
+        # logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
         end_logits = end_logits.squeeze(-1)
@@ -1207,3 +1217,32 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             return total_loss
         else:
             return start_logits, end_logits
+
+#    def forward(self, input_ids, token_type_ids=None, attention_mask=None, start_positions=None, end_positions=None, pos_tags=None):
+#        pos_tags = attentoin_mask[1]
+#        attention_mask = attention_mask[0]
+#        sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+#        logits = self.qa_outputs(sequence_output.extend(pos_tags))
+#        start_logits, end_logits = logits.split(1, dim=-1)
+#        start_logits = start_logits.squeeze(-1)
+#        end_logits = end_logits.squeeze(-1)
+
+#       if start_positions is not None and end_positions is not None:
+#            # If we are on multi-GPU, split add a dimension
+#            if len(start_positions.size()) > 1:
+#                start_positions = start_positions.squeeze(-1)
+#            if len(end_positions.size()) > 1:
+#                end_positions = end_positions.squeeze(-1)
+#            # sometimes the start/end positions are outside our model inputs, we ignore these terms
+#            ignored_index = start_logits.size(1)
+#            start_positions.clamp_(0, ignored_index)
+#            end_positions.clamp_(0, ignored_index)
+
+#            loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
+#            start_loss = loss_fct(start_logits, start_positions)
+#            end_loss = loss_fct(end_logits, end_positions)
+#            total_loss = (start_loss + end_loss) / 2
+#            return total_loss
+#        else:
+#            return start_logits, end_logits
+
