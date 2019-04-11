@@ -1123,6 +1123,7 @@ class BertForTokenClassification(BertPreTrainedModel):
 
 pos_tags_list = ['PH','CC','CD','DT','EX','FW','IN','JJ','JJR','JJS','LS','MD','NN','NNS','NNP','NNPS','PDT','POS','PRP',
             'PRP$','RB','RBR','RBS','RP','SYM','TO','UH','VB','VBD','VBG','VBN','VBP','VBZ','WDT','WP','WP$','WRB']
+ner_tags_list = ['PH','I','O','B']
 class BertForQuestionAnswering(BertPreTrainedModel):
     """BERT model for Question Answering (span extraction).
     This module is composed of the BERT model with a linear layer on top of
@@ -1185,17 +1186,18 @@ class BertForQuestionAnswering(BertPreTrainedModel):
         self.bert = BertModel(config)
         # TODO check with Google if it's normal there is no dropout on the token classifier of SQuAD in the TF version
         # self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.qa_outputs = nn.Linear(config.hidden_size + len(pos_tags_list), 2)
+        self.qa_outputs = nn.Linear(config.hidden_size + len(ner_tags_list), 2)
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, start_positions=None, end_positions=None):
-        pos_tags = attention_mask[1].float()
-        pos_tags = torch.reshape(pos_tags, (-1,384,len(pos_tags_list)))
+        ner_tags = attention_mask[2].float()
+        ner_tags = torch.reshape(ner_tags, (-1,384,len(ner_tags_list)))
+
         # print(pos_tags.size())
         attention_mask = attention_mask[0]
         sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         # print(sequence_output.size())
-        logits = self.qa_outputs(torch.cat((sequence_output,pos_tags),dim=2))
+        logits = self.qa_outputs(torch.cat((sequence_output,ner_tags),dim=2))
         # logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1)
