@@ -333,6 +333,12 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             assert len(input_ids) == max_seq_length
             assert len(input_mask) == max_seq_length
             assert len(segment_ids) == max_seq_length
+            assert len(pos_tags) == max_seq_length
+
+            one_hot_pos_tags = []
+            for t in pos_tags:
+                one_hot_pos_tags.append([0]*len(pos_tags_list))
+                one_hot_pos_tags[len(one_hot_pos_tags)-1][t] = 1
 
             start_position = None
             end_position = None
@@ -394,7 +400,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     start_position=start_position,
                     end_position=end_position,
                     is_impossible=example.is_impossible,
-                    pos_tags=pos_tags))
+                    pos_tags=one_hot_pos_tags))
             unique_id += 1
 
     return features
@@ -884,7 +890,7 @@ def main():
         device = torch.device("cuda", args.local_rank)
         n_gpu = 1
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
-        torch.distributed.init_process_group(backend='nccl')
+        # torch.distributed.init_process_group(backend='nccl')
     logger.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
         device, n_gpu, bool(args.local_rank != -1), args.fp16))
 
@@ -1027,6 +1033,7 @@ def main():
                 if n_gpu == 1:
                     batch = tuple(t.to(device) for t in batch) # multi-gpu does scattering it-self
                 input_ids, input_mask, segment_ids, start_positions, end_positions, pos_tags = batch
+                print(pos_tags.size())
                 loss = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=[input_mask,pos_tags], start_positions=start_positions, end_positions=end_positions)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
