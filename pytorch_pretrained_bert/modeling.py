@@ -1188,7 +1188,7 @@ class BertForQuestionAnswering(BertPreTrainedModel):
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, start_positions=None, end_positions=None):
         pos_tags = attention_mask[1].float()
-        pos_tags = torch.reshape(pos_tags, (3,384,1))
+        pos_tags = torch.reshape(pos_tags, (-1,384,1))
         # print(pos_tags.size())
         attention_mask = attention_mask[0]
         sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)

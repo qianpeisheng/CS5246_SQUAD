@@ -1087,7 +1087,7 @@ def main():
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
 
-        all_pos_tags = torch.tensor([f.pos_tags for f in train_features], dtype=torch.long)
+        all_pos_tags = torch.tensor([f.pos_tags for f in eval_features], dtype=torch.long)
 
         eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_example_index, all_pos_tags)
         # Run prediction for full data
@@ -1103,6 +1103,7 @@ def main():
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
+            pos_tags = pos_tags.to(device)
             with torch.no_grad():
                 batch_start_logits, batch_end_logits = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=[input_mask,pos_tags])
             for i, example_index in enumerate(example_indices):
