@@ -1033,7 +1033,7 @@ def main():
                 if n_gpu == 1:
                     batch = tuple(t.to(device) for t in batch) # multi-gpu does scattering it-self
                 input_ids, input_mask, segment_ids, start_positions, end_positions, pos_tags = batch
-                print(pos_tags.size())
+                #print(pos_tags.size())
                 loss = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=[input_mask,pos_tags], start_positions=start_positions, end_positions=end_positions)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.

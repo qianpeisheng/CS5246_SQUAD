@@ -91,6 +91,6 @@ if __name__ == '__main__':
                   file=sys.stderr)
         dataset = dataset_json['data']
     #with open(args.prediction_file) as prediction_file:
-    with open('tmp/predictions.json') as prediction_file:
+    with open('tmp_one_hot/predictions.json') as prediction_file:
         predictions = json.load(prediction_file)
     print(json.dumps(evaluate(dataset, predictions)))

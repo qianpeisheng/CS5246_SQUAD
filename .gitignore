@@ -1,6 +1,7 @@
 # Initially taken from Github's Python gitignore file
 data/*
 tmp/*
+tmp_one_hot/*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
