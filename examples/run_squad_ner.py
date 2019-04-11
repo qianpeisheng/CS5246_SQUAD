@@ -79,6 +79,7 @@ class SquadExample(object):
 
         self.orig_pos_tag = nltk.pos_tag(self.doc_tokens) # [('apple', 'NN'), ...,]
         self.ner_tag = [i[2][0] for i in tree2conlltags(ne_chunk(self.orig_pos_tag))] # [('Mark', 'NNP', u'B-PERSON'), ...] 
+
         self.start_position = start_position
         self.end_position = end_position
         self.is_impossible = is_impossible
@@ -293,8 +294,9 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                 segment_ids.append(0)
             tokens.append("[SEP]")
 
-            pos_tags.append(pos_tags_list.index('PH')) 
+            pos_tags.append(pos_tags_list.index('PH'))
             ner_tags.append(ner_tags_list.index('PH'))
+            
             segment_ids.append(0)
 
             for i in example.orig_pos_tag[doc_span.start:doc_span.start + doc_span.length]:
@@ -324,6 +326,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
             pos_tags.append(pos_tags_list.index('PH'))
             ner_tags.append(ner_tags_list.index('PH'))
+
             segment_ids.append(1)
 
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
@@ -348,10 +351,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             assert len(pos_tags) == max_seq_length
 
             one_hot_pos_tags = []
+            one_hot_ner_tags = []
             for t in pos_tags:
                 one_hot_pos_tags.append([0]*len(pos_tags_list))
                 one_hot_pos_tags[len(one_hot_pos_tags)-1][t] = 1
-            one_hot_ner_tags = []
             for t in ner_tags:
                 one_hot_ner_tags.append([0]*len(ner_tags_list))
                 one_hot_ner_tags[len(one_hot_ner_tags)-1][t] = 1
@@ -457,6 +460,7 @@ def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer,
                 return (new_start, new_end)
 
     return (input_start, input_end)
+
 
 def _check_is_max_context(doc_spans, cur_span_index, position):
     """Check if this is the 'max context' doc span for the token."""
@@ -1109,7 +1113,6 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
-
         all_pos_tags = torch.tensor([f.pos_tags for f in eval_features], dtype=torch.long)
         all_ner_tags = torch.tensor([f.ner_tags for f in eval_features], dtype=torch.long)
 
@@ -1121,19 +1124,33 @@ def main():
         model.eval()
         all_results = []
         logger.info("Start evaluating")
-        for input_ids, input_mask, segment_ids, example_indices, pos_tags in tqdm(eval_dataloader, desc="Evaluating"):
+        for input_ids, input_mask, segment_ids, example_indices, pos_tags, ner_tags in tqdm(eval_dataloader, desc="Evaluating"):
             if len(all_results) % 1000 == 0:
                 logger.info("Processing example: %d" % (len(all_results)))
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
             pos_tags = pos_tags.to(device)
+            ner_tags = ner_tags.to(device)
             with torch.no_grad():
-                batch_start_logits, batch_end_logits = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=[input_mask,pos_tags,ner_tags])
+                batch_start_logits, batch_end_logits = model(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=[input_mask,pos_tags, ner_tags])
             for i, example_index in enumerate(example_indices):
                 start_logits = batch_start_logits[i].detach().cpu().tolist()
                 end_logits = batch_end_logits[i].detach().cpu().tolist()
                 eval_feature = eval_features[example_index.item()]
+                unique_id = int(eval_feature.unique_id)
+                all_results.append(RawResult(unique_id=unique_id,
+                                             start_logits=start_logits,
+                                             end_logits=end_logits))
+        output_prediction_file = os.path.join(args.output_dir, "predictions.json")
+        output_nbest_file = os.path.join(args.output_dir, "nbest_predictions.json")
+        output_null_log_odds_file = os.path.join(args.output_dir, "null_odds.json")
+        write_predictions(eval_examples, eval_features, all_results,
+                          args.n_best_size, args.max_answer_length,
+                          args.do_lower_case, output_prediction_file,
+                          output_nbest_file, output_null_log_odds_file, args.verbose_logging,
+                          args.version_2_with_negative, args.null_score_diff_threshold)
+
 
 if __name__ == "__main__":
     main()
